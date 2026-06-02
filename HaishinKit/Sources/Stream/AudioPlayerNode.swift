@@ -52,9 +52,6 @@ final actor AudioPlayerNode {
         guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer, await player?.isConnected(self) == true else {
             return
         }
-        if !audioTime.hasAnchor {
-            audioTime.anchor(playerNode.lastRenderTime ?? AVAudioTime(hostTime: 0))
-        }
         scheduledAudioBuffers += 1
         // LM-Monitor patch: start the player node as soon as a buffer
         // arrives. The original threshold-based start
@@ -76,8 +73,42 @@ final actor AudioPlayerNode {
             playerNode.play()
         }
         Task {
-            audioTime.advanced(Int64(audioBuffer.frameLength))
-            await playerNode.scheduleBuffer(audioBuffer, at: audioTime.at)
+            // LM-Monitor patch: schedule buffers with at: nil so each
+            // PCM buffer plays immediately after the previous one.
+            //
+            // The original audioTime.at construction is broken for the
+            // live-receive path:
+            //
+            //   if !audioTime.hasAnchor {
+            //       audioTime.anchor(
+            //           playerNode.lastRenderTime ?? AVAudioTime(hostTime: 0))
+            //   }
+            //
+            // playerNode.lastRenderTime is nil before play() starts
+            // rendering, so the anchor falls back to
+            // AVAudioTime(hostTime: 0). That fallback has
+            // sampleRate = 0, so AudioTime.sampleRate is set to 0 too.
+            // audioTime.at then returns
+            //   AVAudioTime(sampleTime: N, atRate: 0)
+            // (extrapolateTime cannot succeed with a 0 sample rate)
+            // which AVAudioPlayerNode treats as an invalid schedule
+            // time and silently does not render the buffer.
+            //
+            // Symptom: engine.isRunning = true, volume = 1.0,
+            // enqueue() is called continuously with valid PCM buffers
+            // (isPCM=true, connected=true), playerNode.play() is
+            // called -- and the host still hears silence.
+            //
+            // For a live SRT receiver we do not want a jitter buffer
+            // or sample-accurate host-time alignment; we want each
+            // buffer played as fast as it arrives. Passing at: nil
+            // is the documented way to do that ("plays immediately
+            // after the previously scheduled buffer").
+            //
+            // We also leave the audioTime housekeeping out of the
+            // hot path entirely since nothing reads it once we bypass
+            // the at: parameter.
+            await playerNode.scheduleBuffer(audioBuffer, at: nil)
             scheduledAudioBuffers -= 1
             if scheduledAudioBuffers == 0 {
                 isBuffering = true

@@ -49,10 +49,6 @@ final class AudioCodec {
     private var inputBuffersCursor = AudioCodec.defaultInputBuffersCursor
 
     func append(_ sampleBuffer: CMSampleBuffer) {
-        // LM-Monitor diagnostic: trace entry into the codec
-        let sub = sampleBuffer.formatDescription?.mediaSubType
-        let subRaw = sub.map { String(format: "0x%08x", $0.rawValue) } ?? "nil"
-        print("LM-fork/AudioCodec: append CMSampleBuffer settings.format=\(settings.format) isRunning=\(isRunning) numSamples=\(sampleBuffer.numSamples) subType=\(subRaw)")
         guard isRunning else {
             return
         }

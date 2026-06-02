@@ -44,10 +44,6 @@ final actor AudioPlayerNode {
     }
 
     func enqueue(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) async {
-        // LM-Monitor diagnostic: trace entry into the player node
-        let isPCM = audioBuffer is AVAudioPCMBuffer
-        let connected = await player?.isConnected(self) == true
-        print("LM-fork/PlayerNode: enqueue class=\(type(of: audioBuffer)) isPCM=\(isPCM) connected=\(connected) format=\(audioBuffer.format)")
         format = audioBuffer.format
         guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer, await player?.isConnected(self) == true else {
             return

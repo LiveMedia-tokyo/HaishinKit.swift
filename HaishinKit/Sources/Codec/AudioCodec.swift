@@ -144,7 +144,17 @@ final class AudioCodec {
             buffer?.frameLength = Self.defaultFrameCapacity
             return buffer
         default:
-            return AVAudioCompressedBuffer(format: inputFormat, packetCapacity: 1, maximumPacketSize: 1024)
+            // LM-Monitor patch: AVAudioCompressedBuffer's
+            // maximumPacketSize was 1024 bytes, which is too small for
+            // higher-bitrate AAC frames (e.g. 256+ kbps stereo). When
+            // an incoming AAC packet exceeds that, the subsequent
+            // `buffer.byteLength = UInt32(byteCount)` triggers
+            //   AVAudioBuffer.mm:203 -[AVAudioBuffer setByteLength:]:
+            //   (length <= _imp->_byteCapacity)
+            // which kills the host app. 8 KiB comfortably fits any
+            // realistic AAC frame including 320 kbps stereo and
+            // multi-channel content. See HaishinKit issue #1639.
+            return AVAudioCompressedBuffer(format: inputFormat, packetCapacity: 1, maximumPacketSize: 8192)
         }
     }
 

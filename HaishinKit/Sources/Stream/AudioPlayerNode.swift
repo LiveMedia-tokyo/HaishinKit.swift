@@ -52,7 +52,23 @@ final actor AudioPlayerNode {
             audioTime.anchor(playerNode.lastRenderTime ?? AVAudioTime(hostTime: 0))
         }
         scheduledAudioBuffers += 1
-        if !isPaused && !playerNode.isPlaying && Self.bufferCounts <= scheduledAudioBuffers {
+        // LM-Monitor patch: start the player node as soon as a buffer
+        // arrives. The original threshold-based start
+        //   Self.bufferCounts (= 10) <= scheduledAudioBuffers
+        // never triggers in practice for live SRT: AVAudioPlayerNode's
+        // scheduleBuffer completes in microseconds (it just enqueues),
+        // so the async Task below decrements 'scheduledAudioBuffers'
+        // well before the next 20 ms audio frame arrives. The counter
+        // therefore oscillates between 0 and 1 and never reaches 10,
+        // so playerNode.play() is never called and the host hears
+        // silence even though engine.isRunning is true and the volume
+        // is 1.0.
+        //
+        // Starting at the first buffer adds a small amount of initial
+        // jitter (no jitter buffer pre-roll) but is the only way to
+        // make audio audible at all on this code path until the
+        // counter logic is reworked upstream.
+        if !isPaused && !playerNode.isPlaying {
             playerNode.play()
         }
         Task {

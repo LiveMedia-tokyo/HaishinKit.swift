@@ -28,6 +28,12 @@ package final actor IncomingStream {
 
     /// Appends a sample buffer for playback.
     public func append(_ buffer: CMSampleBuffer) {
+        // LM-Monitor diagnostic: trace audio/video dispatch
+        let mt = buffer.formatDescription?.mediaType
+        let mtRaw = mt.map { String(format: "0x%08x", $0.rawValue) } ?? "nil"
+        let subType = buffer.formatDescription?.mediaSubType
+        let subRaw = subType.map { String(format: "0x%08x", $0.rawValue) } ?? "nil"
+        print("LM-fork/Incoming: append CMSampleBuffer mediaType=\(mtRaw) subType=\(subRaw)")
         switch buffer.formatDescription?.mediaType {
         case .audio:
             audioCodec.append(buffer)

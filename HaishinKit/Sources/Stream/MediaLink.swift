@@ -4,6 +4,10 @@ import Foundation
 final actor MediaLink {
     static let capacity = 90
     static let duration: TimeInterval = 0.0
+    /// How long to wait for the audio clock before pacing video with the
+    /// display link instead. Senders whose audio decodes start well inside
+    /// this window and are therefore unaffected.
+    static let audioClockGracePeriod: TimeInterval = 1.0
 
     var dequeue: AsyncStream<CMSampleBuffer> {
         AsyncStream { continutation in
@@ -18,6 +22,7 @@ final actor MediaLink {
         }
     }
     private var duration: TimeInterval = MediaLink.duration
+    private var isUsingDisplayLinkClock = false
     private var presentationTimeStampOrigin: CMTime = .invalid
     private lazy var displayLink = DisplayLinkChoreographer()
     private weak var audioPlayer: AudioPlayerNode?
@@ -52,8 +57,8 @@ final actor MediaLink {
         defer {
             duration += timestamp
         }
-        // LM-Monitor patch: fall back to the display-link clock whenever the
-        // audio clock is not advancing.
+        // LM-Monitor patch: fall back to the display-link clock only when the
+        // audio clock never starts at all.
         //
         // AudioPlayerNode.currentTime returns 0.0 while its playerNode is not
         // playing, which is the permanent state for a video-only stream (or
@@ -61,18 +66,29 @@ final actor MediaLink {
         // covers a *nil* audioPlayer, and a receiver that calls
         // attachAudioPlayer always has one, so currentTime stays pinned at 0.
         //
-        // The release test below is
+        // The release test in startRunning is
         //     pts - ptsOrigin <= currentTime
         // so with currentTime == 0 only the very first frame (pts == origin)
         // is ever yielded and every later frame stays in the queue.
         //
-        // Symptom: a video-only SRT source displays a single frozen frame
-        // while the connection stays healthy and frames keep arriving.
+        // Symptom: such a source displays a single frozen frame while the
+        // connection stays healthy and frames keep arriving.
         //
-        // `duration` accumulates the display-link delta each tick, so it is
-        // the correct wall-clock stand-in until audio starts rendering.
-        if let audioTime = await audioPlayer?.currentTime, 0 < audioTime {
-            return audioTime
+        // The grace period matters: senders whose audio decodes normally
+        // start it within a few frames, so they keep the original
+        // audio-driven pacing untouched and this branch never runs for them.
+        // Switching to the display link is latched, because the audio clock
+        // restarts near zero and adopting it late would run the clock
+        // backwards and stall video that has already been released.
+        if !isUsingDisplayLinkClock {
+            if let audioTime = await audioPlayer?.currentTime, 0 < audioTime {
+                return audioTime
+            }
+            guard Self.audioClockGracePeriod < duration else {
+                return 0.0
+            }
+            isUsingDisplayLinkClock = true
+            logger.info("audio clock never started; pacing video with the display link")
         }
         return duration
     }
@@ -86,6 +102,7 @@ extension MediaLink: AsyncRunner {
         }
         isRunning = true
         duration = 0.0
+        isUsingDisplayLinkClock = false
         displayLink.startRunning()
         Task {
             for await currentTime in displayLink.updateFrames {

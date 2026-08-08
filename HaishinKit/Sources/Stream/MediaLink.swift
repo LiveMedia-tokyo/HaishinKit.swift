@@ -52,7 +52,29 @@ final actor MediaLink {
         defer {
             duration += timestamp
         }
-        return await audioPlayer?.currentTime ?? duration
+        // LM-Monitor patch: fall back to the display-link clock whenever the
+        // audio clock is not advancing.
+        //
+        // AudioPlayerNode.currentTime returns 0.0 while its playerNode is not
+        // playing, which is the permanent state for a video-only stream (or
+        // one whose audio never decodes). The original `?? duration` only
+        // covers a *nil* audioPlayer, and a receiver that calls
+        // attachAudioPlayer always has one, so currentTime stays pinned at 0.
+        //
+        // The release test below is
+        //     pts - ptsOrigin <= currentTime
+        // so with currentTime == 0 only the very first frame (pts == origin)
+        // is ever yielded and every later frame stays in the queue.
+        //
+        // Symptom: a video-only SRT source displays a single frozen frame
+        // while the connection stays healthy and frames keep arriving.
+        //
+        // `duration` accumulates the display-link delta each tick, so it is
+        // the correct wall-clock stand-in until audio starts rendering.
+        if let audioTime = await audioPlayer?.currentTime, 0 < audioTime {
+            return audioTime
+        }
+        return duration
     }
 }
 

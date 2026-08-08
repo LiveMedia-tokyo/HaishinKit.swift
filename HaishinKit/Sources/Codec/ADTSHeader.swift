@@ -35,6 +35,25 @@ package struct ADTSHeader: Equatable {
             let channel = AudioSpecificConfig.ChannelConfiguration(rawValue: channelConfiguration) else {
             return nil
         }
+        // LM-Monitor patch: use the real channel count, and refuse to build a
+        // format we cannot describe.
+        //
+        // mChannelsPerFrame used to be `channel.rawValue`, which is the enum's
+        // raw ADTS value rather than a channel count. They coincide up to 5.1
+        // but 7.1 has raw value 7 and eight channels, so its format described
+        // one channel too few.
+        //
+        // channelConfiguration 0 means "the layout lives in the stream's
+        // program_config_element", which is what an encoder emits for a
+        // non-standard layout such as quad (OBS does this). channelCount is
+        // then 0, and the old code happily created a zero-channel format that
+        // no decoder can use, so audio was silently dropped with no clue why.
+        // Returning nil keeps the failure visible in the log instead.
+        let channelCount = channel.channelCount
+        guard 0 < channelCount else {
+            logger.warn("unsupported AAC channel_configuration=0 (layout defined in the program_config_element); audio will not be played")
+            return nil
+        }
         var formatDescription: CMAudioFormatDescription?
         var audioStreamBasicDescription = AudioStreamBasicDescription(
             mSampleRate: frequency.sampleRate,
@@ -43,7 +62,7 @@ package struct ADTSHeader: Equatable {
             mBytesPerPacket: 0,
             mFramesPerPacket: 1024,
             mBytesPerFrame: 0,
-            mChannelsPerFrame: UInt32(channel.rawValue),
+            mChannelsPerFrame: channelCount,
             mBitsPerChannel: 0,
             mReserved: 0
         )
